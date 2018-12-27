@@ -120,3 +120,114 @@ If you're getting booted up as a contributor, here are some discussions you shou
 1. [Idea for pagination handling](https://github.com/apollostack/apollo-client/issues/26)
 1. [Discussion about interaction with Redux and domain vs. client state](https://github.com/apollostack/apollo-client/issues/98)
 1. [Long conversation about different client options, before this repo existed](https://github.com/apollostack/apollo/issues/1)
+
+
+> NOTE: Differences with the main repository.
+
+# Query Partitioning
+
+The goal of this fork is to try and figure out an effective way in which queries can be partitioned into subqueries in order to limit load on servers. Below is an example
+
+Lets say that the following query is first issued
+```
+chats {
+  members {
+    displayName
+    email
+  }
+  properties {
+    foo
+    bar
+  }
+}
+```
+
+As a secondary query in order to resolve some other part of the UI we end up issuing a query like so
+```
+chats {
+  members {
+    displayName
+    email
+  }
+  topic // NEW FIELD
+  properties {
+    foo
+    bar
+  }
+}
+```
+Now lets say the following is the size of the properties
+```
+chats {
+  members { // 1MB
+    displayName
+    email
+  }
+  topic // NEW FIELD (12 Bytes)
+  properties { // 512KB
+    foo
+    bar
+  }
+}
+```
+
+The current apollo cache works as follows:
+
+```
+const isComplete = diffQueryAgainstStore(query);
+if (!isComplete) {
+  return fetchRequest(query).then(result = {
+    addToStore(query, result);
+    return result;
+;  });
+}
+```
+
+Thus the entire query will be re-issued and a fetch would be made to get 1.5MB of data when all that is needed is 12 bytes.
+
+This particular implementation in review will instead attempt do something like so
+```
+const { isComplete, partitionedQuery, storeResult } = diffQueryAgainstStore(query);
+if(!isComplete) {
+  return fetchRequest(partitionedQuery).then (() => {
+    if (partitionedQuery !== query) {
+      merge(result, storeResult);
+      addToStore(query, result);
+      return result;
+    }
+  });
+}
+
+```
+
+where partitionedQuery is something like this
+```
+chats {
+  topic // Only 12 bytes
+}
+```
+
+## makeExecutableSchema backed selections:
+
+Another benefit while executing the above sort of strategy lies with makeExecutableSchema backed local clients.
+
+The logic for makeExecutableSchema is something like below
+```
+1. Parse field from response
+2. Compare if required in selection
+3. Add field to result if type and subtypes match
+4. Recurse for every field
+```
+
+This process can get expensive when iterating through larger responses like the ones indicated above.
+By reducing the `selectionSet` that is requested we ensure that lesser time is spent in doing the above logic.
+
+> NOTE: It may be that the underlying network call to fetch the topic() property is non trivial and actually requires getting all the payload, but this is something that can be optimized at the resolver/network layer by writing more efficient resolvers/reducing traffic
+
+
+## Changes required
+1. __ApolloClient/QueryManager__:
+The intial set of changes required here would be to allow passing/merging results from the partitioned queries.
+2. __Store/Caching layer__: Should return the partitioned query for fields that are missing as part of the `isComplete` flag. A new result should be present as part of the `diff` method that is there in the `ApolloCache` interface
+3. __Tests__: To make sure all of the above works (WIP)
+
