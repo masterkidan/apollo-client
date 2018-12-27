@@ -71,7 +71,7 @@ export type ExecResultMissingField = {
   object: StoreObject;
   fieldName: string;
   tolerable: boolean;
-  selection: FieldNode;
+  selection: SelectionNode;
 };
 
 export type ExecResult<R = any> = {
@@ -264,7 +264,7 @@ export class StoreReader {
     };
   }
   private partitionQuery(
-    fields: FieldNode[],
+    missingSelections: SelectionNode[],
     {
       query,
       rootValue,
@@ -295,7 +295,7 @@ export class StoreReader {
             mainDefinition.selectionSet,
             rootValue,
             execContext,
-            fields,
+            missingSelections,
           ),
         },
         ...fragments,
@@ -311,7 +311,7 @@ export class StoreReader {
       variableValues: any;
       contextValue: ReadStoreContext;
     },
-    fields: FieldNode[],
+    missingSelections: SelectionNode[],
   ): SelectionSetNode {
     const { fragmentMap, variableValues: variables } = execContext;
 
@@ -327,13 +327,13 @@ export class StoreReader {
       if (isField(selection)) {
         if (!selection.selectionSet) {
           // Handle scalar selections
-          if (fields.indexOf(selection) !== -1) {
+          if (missingSelections.indexOf(selection) !== -1) {
             resultSelectionsSet.selections.push(selection);
           }
         } else {
           // In the case of subselections, if the parent is in the missing list, traversing through the
           // subfields is pointless, hence inserting the parent and continuing.
-          if (fields.indexOf(selection) !== -1) {
+          if (missingSelections.indexOf(selection) !== -1) {
             resultSelectionsSet.selections.push(selection);
           } else {
             // If parent is not listed as missing, we still need to check the subfields, hence checking those here.
@@ -341,7 +341,7 @@ export class StoreReader {
               selection.selectionSet,
               rootValue,
               execContext,
-              fields,
+              missingSelections,
             );
             // If there are no  missing subselections found avoid adding the parent.
             if (selectionToInsert.selections.length > 0) {
@@ -379,7 +379,7 @@ export class StoreReader {
             fragment.selectionSet,
             rootValue,
             execContext,
-            fields,
+            missingSelections,
           );
           resultSelectionsSet.selections = resultSelectionsSet.selections.concat(
             selectionsToInsert.selections,
